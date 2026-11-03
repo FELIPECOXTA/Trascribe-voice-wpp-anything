@@ -102,15 +102,13 @@ export async function transcribeSingleAudio(
   }
 
   const data = await response.json();
-  const cleanText = (data.transcription || '')
-    .replace(/\[\s*(?:áudio\s+)?(?:inaudível|inaudivel|indecifrável|indecifravel)\s*\]/gi, '')
-    .trim();
+  const rawText = (data.transcription || '').trim();
 
   const detected: string[] = data.speakersDetected || [];
-  if (detected.length === 0 && cleanText) {
+  if (detected.length === 0 && rawText) {
     const regex = /\[([^\]]+)\]:/g;
     let m;
-    while ((m = regex.exec(cleanText)) !== null) {
+    while ((m = regex.exec(rawText)) !== null) {
       const spk = m[1].trim();
       if (spk && !detected.includes(spk)) {
         detected.push(spk);
@@ -119,7 +117,7 @@ export async function transcribeSingleAudio(
   }
 
   return {
-    transcription: cleanText || data.transcription || 'Áudio decodificado.',
+    transcription: rawText || 'Áudio decodificado.',
     modelUsed: data.modelUsed,
     speakersDetected: detected,
     hasMultipleSpeakers: detected.length >= 2 || data.hasMultipleSpeakers || false,

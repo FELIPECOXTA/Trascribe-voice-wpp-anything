@@ -683,6 +683,34 @@ export default function App() {
     });
   };
 
+  // Atualiza diretamente o texto transcrito revisado manualmente pelo usuário
+  const handleUpdateTranscriptionText = (audioName: string, newText: string) => {
+    const trimmed = newText.trim();
+    if (!trimmed) return;
+
+    setAudiosList((prev) =>
+      prev.map((a) => (a.name === audioName ? { ...a, transcription: trimmed } : a))
+    );
+
+    setParsedChat((prev) => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        messages: prev.messages.map((m) =>
+          m.audioFile?.name === audioName
+            ? {
+                ...m,
+                audioFile: {
+                  ...m.audioFile,
+                  transcription: trimmed,
+                },
+              }
+            : m
+        ),
+      };
+    });
+  };
+
   // Reinicia e retenta áudios que falharam na transcrição
   const handleRetryFailedAudios = () => {
     setErrorMessage(null);
@@ -949,6 +977,7 @@ export default function App() {
                 onAnalyzeMediaSingle={handleAnalyzeSingleMedia}
                 onUpdateAudioNotes={handleUpdateAudioNotes}
                 onRenameSpeaker={handleRenameSpeaker}
+                onUpdateTranscriptionText={handleUpdateTranscriptionText}
               />
             ) : (
               <TranscriptionQueue

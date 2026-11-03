@@ -42,6 +42,7 @@ interface ChatViewerProps {
   onAnalyzeMediaSingle?: (media: ExtractedAudioFile) => void;
   onUpdateAudioNotes?: (audioName: string, notes: string, hasMultipleSpeakers?: boolean) => void;
   onRenameSpeaker?: (audioName: string, oldSpeaker: string, newSpeaker: string) => void;
+  onUpdateTranscriptionText?: (audioName: string, newText: string) => void;
 }
 
 // Gera cor determinística e vibrante para o avatar do remetente
@@ -70,6 +71,34 @@ function getSenderInitials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
+/**
+ * Renderiza o texto da transcrição destacando trechos com incerteza ou ruído para revisão humana
+ */
+function renderHighlightedTranscript(text: string, isLargeFont: boolean) {
+  // Captura [trecho inaudível], [trecho incerto: ...], [inaudível]
+  const pattern = /(\[(?:trecho\s+)?(?:inaudível|inaudivel|incerto:[^\]]+)\])/gi;
+  const parts = text.split(pattern);
+
+  return (
+    <span className={`leading-relaxed select-text ${isLargeFont ? 'text-base sm:text-lg font-medium' : 'text-sm sm:text-base'}`}>
+      {parts.map((part, i) => {
+        if (/^\[(?:trecho\s+)?(?:inaudível|inaudivel|incerto:[^\]]+)\]$/i.test(part.trim())) {
+          return (
+            <span
+              key={i}
+              className="inline-flex items-center gap-1 mx-1 px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-semibold cursor-help"
+              title="Trecho que requer revisão ou escuta atenta"
+            >
+              ⚠️ {part}
+            </span>
+          );
+        }
+        return <span key={i}>{part}</span>;
+      })}
+    </span>
+  );
+}
+
 export const ChatViewer: React.FC<ChatViewerProps> = ({
   messages,
   participants,
@@ -80,6 +109,7 @@ export const ChatViewer: React.FC<ChatViewerProps> = ({
   onAnalyzeMediaSingle,
   onUpdateAudioNotes,
   onRenameSpeaker,
+  onUpdateTranscriptionText,
 }) => {
   const [filterType, setFilterType] = useState<'all' | 'audios' | 'media' | 'text'>('all');
   const [selectedParticipant, setSelectedParticipant] = useState<string>('all');
@@ -101,6 +131,16 @@ export const ChatViewer: React.FC<ChatViewerProps> = ({
     currentSpeaker: string;
   } | null>(null);
   const [newSpeakerDraft, setNewSpeakerDraft] = useState('');
+
+  // Modal para Revisão / Edição Direta da Transcrição
+  const [editingTranscriptAudio, setEditingTranscriptAudio] = useState<{
+    audioName: string;
+    sender: string;
+    timestamp: string;
+    objectUrl?: string;
+    initialText: string;
+  } | null>(null);
+  const [editedTranscriptDraft, setEditedTranscriptDraft] = useState('');
 
   // Modo de exibição da transcrição (diálogo vs contínuo) por áudio
   const [dialogueViewMap, setDialogueViewMap] = useState<Record<string, boolean>>({});
@@ -729,25 +769,46 @@ export const ChatViewer: React.FC<ChatViewerProps> = ({
                                 );
                               })()}
 
-                              <button
-                                onClick={() => handleShareText(msg.id, msg.sender, media.transcription!, 'Áudio')}
-                                className="px-3 py-1.5 bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 min-h-[32px]"
-                              >
-                                <Share2 className="w-3.5 h-3.5" />
-                                <span>{sharedId === msg.id ? 'Copiado p/ Envio!' : 'Enviar no WhatsApp'}</span>
-                              </button>
-
-                              <button
-                                onClick={() => handleCopyText(msg.id, media.transcription!)}
-                                className="p-2 text-zinc-300 hover:text-emerald-400 rounded-xl bg-zinc-800/80 hover:bg-zinc-800 transition-colors min-h-[32px] min-w-[32px] flex items-center justify-center border border-zinc-700/60"
-                                title="Copiar transcrição completa"
-                              >
-                                {copiedId === msg.id ? (
-                                  <Check className="w-4 h-4 text-emerald-400" />
-                                ) : (
-                                  <Copy className="w-4 h-4" />
+                                {/* Botão de Revisão da Transcrição / Edição de Palavras */}
+                                {onUpdateTranscriptionText && (
+                                  <button
+                                    onClick={() => {
+                                      setEditingTranscriptAudio({
+                                        audioName: media.name,
+                                        sender: msg.sender,
+                                        timestamp: msg.timestamp,
+                                        objectUrl: media.objectUrl,
+                                        initialText: media.transcription!,
+                                      });
+                                      setEditedTranscriptDraft(media.transcription!);
+                                    }}
+                                    className="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-amber-500/30 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 min-h-[32px]"
+                                    title="Revisar e corrigir palavras da transcrição ou ajustar trechos inaudíveis"
+                                  >
+                                    <Pencil className="w-3.5 h-3.5 text-amber-400" />
+                                    <span>Revisar Texto</span>
+                                  </button>
                                 )}
-                              </button>
+
+                                <button
+                                  onClick={() => handleShareText(msg.id, msg.sender, media.transcription!, 'Áudio')}
+                                  className="px-3 py-1.5 bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 min-h-[32px]"
+                                >
+                                  <Share2 className="w-3.5 h-3.5" />
+                                  <span>{sharedId === msg.id ? 'Copiado p/ Envio!' : 'Enviar no WhatsApp'}</span>
+                                </button>
+
+                                <button
+                                  onClick={() => handleCopyText(msg.id, media.transcription!)}
+                                  className="p-2 text-zinc-300 hover:text-emerald-400 rounded-xl bg-zinc-800/80 hover:bg-zinc-800 transition-colors min-h-[32px] min-w-[32px] flex items-center justify-center border border-zinc-700/60"
+                                  title="Copiar transcrição completa"
+                                >
+                                  {copiedId === msg.id ? (
+                                    <Check className="w-4 h-4 text-emerald-400" />
+                                  ) : (
+                                    <Copy className="w-4 h-4" />
+                                  )}
+                                </button>
                             </div>
                           </div>
 
@@ -860,13 +921,13 @@ export const ChatViewer: React.FC<ChatViewerProps> = ({
                                           </button>
                                         </div>
 
-                                        <p
+                                        <div
                                           className={`text-zinc-100 leading-relaxed pl-8 select-text ${
                                             isLargeFont ? 'text-base font-medium' : 'text-xs sm:text-sm'
                                           }`}
                                         >
-                                          "{turn.text}"
-                                        </p>
+                                          {renderHighlightedTranscript(turn.text, isLargeFont)}
+                                        </div>
                                       </div>
                                     );
                                   })}
@@ -876,13 +937,13 @@ export const ChatViewer: React.FC<ChatViewerProps> = ({
 
                             // Exibição em Texto Corrido
                             return (
-                              <p
+                              <div
                                 className={`text-zinc-100 leading-relaxed whitespace-pre-wrap select-text ${
                                   isLargeFont ? 'text-base sm:text-lg font-medium' : 'text-sm sm:text-base'
                                 }`}
                               >
-                                "{media.transcription}"
-                              </p>
+                                {renderHighlightedTranscript(media.transcription, isLargeFont)}
+                              </div>
                             );
                           })()}
                         </div>
@@ -1259,8 +1320,12 @@ export const ChatViewer: React.FC<ChatViewerProps> = ({
                                   const col = getSenderColor(t.speaker);
                                   return (
                                     <div key={i} className="p-2.5 rounded-xl bg-zinc-900/80 border border-zinc-800 text-xs space-y-1">
-                                      <span className={`font-bold ${col.text}`}>{t.speaker}:</span>
-                                      <p className="text-zinc-100 pl-2">"{t.text}"</p>
+                                      <div className="flex items-center justify-between">
+                                        <span className={`font-bold ${col.text}`}>{t.speaker}:</span>
+                                      </div>
+                                      <div className="text-zinc-100 pl-2">
+                                        {renderHighlightedTranscript(t.text, isLargeFont)}
+                                      </div>
                                     </div>
                                   );
                                 })}
@@ -1268,15 +1333,37 @@ export const ChatViewer: React.FC<ChatViewerProps> = ({
                             );
                           }
                           return (
-                            <p
+                            <div
                               className={`text-zinc-100 leading-relaxed whitespace-pre-wrap select-text ${
                                 isLargeFont ? 'text-base sm:text-lg font-medium' : 'text-xs sm:text-sm'
                               }`}
                             >
-                              "{media.transcription}"
-                            </p>
+                              {renderHighlightedTranscript(media.transcription, isLargeFont)}
+                            </div>
                           );
                         })()}
+
+                        {/* Ações rápidas na bolha */}
+                        {onUpdateTranscriptionText && (
+                          <div className="pt-1 flex items-center justify-end gap-2 border-t border-emerald-500/10">
+                            <button
+                              onClick={() => {
+                                setEditingTranscriptAudio({
+                                  audioName: media.name,
+                                  sender: msg.sender,
+                                  timestamp: msg.timestamp,
+                                  objectUrl: media.objectUrl,
+                                  initialText: media.transcription!,
+                                });
+                                setEditedTranscriptDraft(media.transcription!);
+                              }}
+                              className="text-[11px] text-amber-300 hover:text-amber-200 flex items-center gap-1 font-semibold"
+                            >
+                              <Pencil className="w-3 h-3" />
+                              <span>Revisar / Corrigir</span>
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1465,6 +1552,148 @@ export const ChatViewer: React.FC<ChatViewerProps> = ({
                 <Check className="w-4 h-4" />
                 <span>Salvar Nome</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Revisão & Edição de Transcrição Humana */}
+      {editingTranscriptAudio && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-150"
+          onClick={() => setEditingTranscriptAudio(null)}
+        >
+          <div
+            className="w-full max-w-2xl bg-zinc-900 border border-zinc-800 rounded-3xl flex flex-col max-h-[90vh] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-950/60">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+                  <Pencil className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-zinc-100 flex items-center gap-2">
+                    <span>Revisão & Edição de Transcrição</span>
+                    <span className="text-[11px] font-normal px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono">
+                      Fidelidade Acústica
+                    </span>
+                  </h3>
+                  <p className="text-xs text-zinc-400">
+                    Áudio de <strong className="text-zinc-200">{editingTranscriptAudio.sender}</strong> ({editingTranscriptAudio.timestamp})
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setEditingTranscriptAudio(null)}
+                className="text-zinc-400 hover:text-white p-1.5 rounded-xl hover:bg-zinc-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Conteúdo */}
+            <div className="p-6 space-y-4 overflow-y-auto flex-1">
+              {/* Player do Áudio Original para audição simultânea */}
+              {editingTranscriptAudio.objectUrl && (
+                <div className="p-3.5 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-2">
+                  <div className="flex items-center justify-between text-xs text-zinc-300">
+                    <span className="font-semibold flex items-center gap-1.5 text-emerald-400">
+                      <Volume2 className="w-4 h-4" />
+                      <span>Ouvir Gravação Original:</span>
+                    </span>
+                    <span className="text-[11px] text-zinc-500 font-mono truncate max-w-[200px]">
+                      {editingTranscriptAudio.audioName}
+                    </span>
+                  </div>
+                  <audio
+                    controls
+                    src={editingTranscriptAudio.objectUrl}
+                    className="w-full h-9 rounded-xl"
+                  />
+                  <p className="text-[11px] text-zinc-500">
+                    Dica: Ouça com fones para verificar termos com ruído de fundo ou sobreposição de vozes.
+                  </p>
+                </div>
+              )}
+
+              {/* Botões de Inserção Rápida de Tags de Incerteza e Diarização */}
+              <div className="space-y-1.5">
+                <span className="text-xs font-semibold text-zinc-300">Inserir tags de precisão:</span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {[
+                    { label: '+ [trecho inaudível]', tag: ' [trecho inaudível] ' },
+                    { label: '+ [trecho incerto]', tag: ' [trecho incerto: ...] ' },
+                    { label: '+ [Interlocutor 1]:', tag: '\n[Interlocutor 1]: ' },
+                    { label: '+ [Interlocutor 2]:', tag: '\n[Interlocutor 2]: ' },
+                  ].map((item) => (
+                    <button
+                      key={item.label}
+                      type="button"
+                      onClick={() => setEditedTranscriptDraft((prev) => prev + item.tag)}
+                      className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs text-amber-300 border border-amber-500/20 transition-colors font-mono"
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Textarea de Edição */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-zinc-300 flex items-center justify-between">
+                  <span>Texto Transcrito (Edição Livre):</span>
+                  <span className="text-[11px] text-zinc-500 font-mono">
+                    {editedTranscriptDraft.length} caracteres
+                  </span>
+                </label>
+                <textarea
+                  value={editedTranscriptDraft}
+                  onChange={(e) => setEditedTranscriptDraft(e.target.value)}
+                  rows={8}
+                  className="w-full p-3.5 rounded-2xl bg-zinc-950 border border-zinc-700 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 leading-relaxed font-sans select-text"
+                  placeholder="Edite as palavras da transcrição..."
+                />
+              </div>
+
+              <div className="p-3 rounded-xl bg-zinc-950/60 border border-zinc-800 text-[11px] text-zinc-400 leading-relaxed">
+                <strong className="text-zinc-200">Integridade da Consulta:</strong> A transcrição revisada será utilizada em tempo real nos cards e na exportação unificada do WhatsApp TXT.
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-3.5 border-t border-zinc-800 bg-zinc-950/60 flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => setEditedTranscriptDraft(editingTranscriptAudio.initialText)}
+                className="px-3.5 py-2 text-xs text-zinc-400 hover:text-zinc-200 underline"
+              >
+                Restaurar Transcrição Inicial
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingTranscriptAudio(null)}
+                  className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onUpdateTranscriptionText && editedTranscriptDraft.trim()) {
+                      onUpdateTranscriptionText(editingTranscriptAudio.audioName, editedTranscriptDraft.trim());
+                    }
+                    setEditingTranscriptAudio(null);
+                  }}
+                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg transition-all flex items-center gap-1.5"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>Salvar Revisão</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

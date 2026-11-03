@@ -10,8 +10,15 @@ import {
   X,
   ShieldCheck,
   Zap,
+  KeyRound,
+  AlertTriangle,
 } from 'lucide-react';
-import { BillingState, activatePremiumPlan, resetToFreePlan } from '../services/billing';
+import {
+  BillingState,
+  activatePremiumPlan,
+  resetToFreePlan,
+  validatePasscodeOnServer,
+} from '../services/billing';
 
 interface PricingModalProps {
   isOpen: boolean;
@@ -34,7 +41,35 @@ export const PricingModal: React.FC<PricingModalProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [justUnlocked, setJustUnlocked] = useState(false);
 
+  // Voucher / Passcode de liberação
+  const [passcodeDraft, setPasscodeDraft] = useState('');
+  const [passcodeError, setPasscodeError] = useState<string | null>(null);
+  const [passcodeSuccess, setPasscodeSuccess] = useState<string | null>(null);
+  const [isValidatingPasscode, setIsValidatingPasscode] = useState(false);
+
   if (!isOpen) return null;
+
+  const handleValidatePasscode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!passcodeDraft.trim()) return;
+    setPasscodeError(null);
+    setPasscodeSuccess(null);
+    setIsValidatingPasscode(true);
+
+    const result = await validatePasscodeOnServer(passcodeDraft.trim());
+    setIsValidatingPasscode(false);
+
+    if (result.valid) {
+      setPasscodeSuccess(result.message || 'Código VIP validado com sucesso!');
+      const updated = activatePremiumPlan('unlimited_pro');
+      onBillingUpdated(updated);
+      setTimeout(() => {
+        onClose();
+      }, 1500);
+    } else {
+      setPasscodeError(result.error || 'Código inválido ou não autorizado.');
+    }
+  };
 
   const pixCode =
     selectedPlan === 'single_zip'
@@ -130,6 +165,60 @@ export const PricingModal: React.FC<PricingModalProps> = ({
             </div>
           ) : (
             <>
+              {/* Alerta de Ambiente de Homologação / Demonstração (Segurança e Auditoria) */}
+              <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-3">
+                <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0 mt-0.5">
+                  <AlertTriangle className="w-4 h-4" />
+                </div>
+                <div className="text-xs text-amber-200/90 leading-relaxed">
+                  <strong className="text-amber-300">Ambiente de Demonstração / Homologação (Sandbox):</strong>{' '}
+                  Esta interface é uma simulação de fluxo para prototipação e testes. Para receber pagamentos comerciais reais em produção, conecte o webhook do seu gateway de pagamento (Mercado Pago, Asaas, Stripe ou Gerencianet) no backend.
+                </div>
+              </div>
+
+              {/* Seção de Validação Server-side de Cupom VIP / Chave de Acesso */}
+              <form
+                onSubmit={handleValidatePasscode}
+                className="p-3.5 rounded-2xl bg-zinc-950/80 border border-zinc-800 space-y-2.5"
+              >
+                <div className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2 text-zinc-200 font-semibold">
+                    <KeyRound className="w-4 h-4 text-emerald-400" />
+                    <span>Possui Código de Desbloqueio / Voucher VIP?</span>
+                  </div>
+                  <span className="text-[10px] text-zinc-500 font-mono">Validação no Servidor</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={passcodeDraft}
+                    onChange={(e) => setPasscodeDraft(e.target.value)}
+                    placeholder="Digite seu código (ex: ORACULO-PRO-2026)"
+                    className="flex-1 bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 font-mono uppercase focus:outline-none focus:border-emerald-500"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isValidatingPasscode || !passcodeDraft.trim()}
+                    className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow transition-all flex items-center gap-1.5 shrink-0"
+                  >
+                    {isValidatingPasscode ? (
+                      <span>Validando...</span>
+                    ) : (
+                      <>
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                        <span>Validar Código</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+                {passcodeError && (
+                  <p className="text-[11px] text-rose-400">{passcodeError}</p>
+                )}
+                {passcodeSuccess && (
+                  <p className="text-[11px] text-emerald-400 font-medium">{passcodeSuccess}</p>
+                )}
+              </form>
+
               {/* Card explicativo da cota de teste */}
               <div className="p-3.5 rounded-2xl bg-zinc-950/70 border border-zinc-800 flex items-start gap-3">
                 <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center shrink-0 mt-0.5">
@@ -307,7 +396,7 @@ export const PricingModal: React.FC<PricingModalProps> = ({
                   </div>
                 )}
 
-                {/* Botão de confirmação de pagamento */}
+                {/* Botão de simulação de pagamento em homologação */}
                 <button
                   type="button"
                   onClick={handleConfirmPayment}
@@ -315,18 +404,17 @@ export const PricingModal: React.FC<PricingModalProps> = ({
                   className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-lg transition-all flex items-center justify-center gap-2 active:scale-98"
                 >
                   {isProcessing ? (
-                    <span>Validando pagamento...</span>
+                    <span>Validando simulação no sandbox...</span>
                   ) : justUnlocked ? (
                     <>
                       <CheckCircle2 className="w-4 h-4 text-emerald-200" />
-                      <span>Transcrições Completas Desbloqueadas!</span>
+                      <span>Transcrições Liberadas (Modo Homologação)!</span>
                     </>
                   ) : (
                     <>
                       <Sparkles className="w-4 h-4" />
                       <span>
-                        Confirmar Pagamento de{' '}
-                        {selectedPlan === 'single_zip' ? 'R$ 9,90' : 'R$ 29,90'} e Desbloquear
+                        Simular Ativação de Teste ({selectedPlan === 'single_zip' ? 'R$ 9,90' : 'R$ 29,90'})
                       </span>
                     </>
                   )}

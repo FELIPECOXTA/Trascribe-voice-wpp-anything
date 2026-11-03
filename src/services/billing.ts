@@ -90,3 +90,48 @@ export function resetToFreePlan(): BillingState {
   saveBillingState(newState);
   return newState;
 }
+
+/**
+ * Valida código de acesso/cupom VIP no servidor
+ */
+export async function validatePasscodeOnServer(code: string): Promise<{
+  valid: boolean;
+  message?: string;
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/billing/validate-passcode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }),
+    });
+    const data = await res.json();
+    if (res.ok && data.valid) {
+      activatePremiumPlan('unlimited_pro');
+      return { valid: true, message: data.message };
+    }
+    return { valid: false, error: data.error || 'Código inválido ou não autorizado.' };
+  } catch (err: any) {
+    return { valid: false, error: 'Erro de conexão com o servidor de validação.' };
+  }
+}
+
+/**
+ * Consulta a cota server-side do cliente
+ */
+export async function fetchServerQuota(): Promise<{
+  totalFree: number;
+  used: number;
+  remaining: number;
+} | null> {
+  try {
+    const res = await fetch('/api/billing/quota');
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (e) {
+    console.warn('Não foi possível sincronizar cota com servidor:', e);
+  }
+  return null;
+}
+

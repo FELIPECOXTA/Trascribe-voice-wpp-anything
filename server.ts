@@ -16,9 +16,58 @@ const PORT = Number(process.env.PORT) || 3000;
 app.use(express.json({ limit: '60mb' }));
 app.use(express.urlencoded({ extended: true, limit: '60mb' }));
 
-// Inicialização do Google GenAI usando a chave de ambiente do servidor com User-Agent exigido
+// In-memory Rate Limiter simples e eficiente por IP
+interface RateLimitEntry {
+  count: number;
+  resetTime: number;
+}
+const rateLimitMap = new Map<string, RateLimitEntry>();
+const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minuto
+const MAX_REQUESTS_PER_WINDOW = 25; // 25 requisições por minuto por IP
+
+function checkRateLimit(ip: string): { allowed: boolean; remaining: number } {
+  const now = Date.now();
+  const entry = rateLimitMap.get(ip);
+
+  if (!entry || now > entry.resetTime) {
+    rateLimitMap.set(ip, { count: 1, resetTime: now + RATE_LIMIT_WINDOW_MS });
+    return { allowed: true, remaining: MAX_REQUESTS_PER_WINDOW - 1 };
+  }
+
+  if (entry.count >= MAX_REQUESTS_PER_WINDOW) {
+    return { allowed: false, remaining: 0 };
+  }
+
+  entry.count += 1;
+  return { allowed: true, remaining: MAX_REQUESTS_PER_WINDOW - entry.count };
+}
+
+// Limpeza periódica do mapa de rate limit a cada 5 minutos
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of rateLimitMap.entries()) {
+    if (now > entry.resetTime) {
+      rateLimitMap.delete(ip);
+    }
+  }
+}, 5 * 60 * 1000);
+
+// In-memory Quota Tracker por IP para garantir limite de testes gratuitos no backend
+const ipQuotaMap = new Map<string, number>();
+const MAX_FREE_IP_AUDIOS = 5;
+
+// Códigos promocionais / passcodes válidos para desbloqueio homologado
+const VALID_PASSCODES = new Set([
+  'ORACULO-PRO-2026',
+  'TRANSCREVA-VIP',
+  'CONSULTA-PREMIUM',
+  'BABADO-UNLIMITED',
+]);
+
+// Inicialização do Google GenAI usando EXCLUSIVAMENTE a chave segura do servidor
+const serverGeminiApiKey = process.env.GEMINI_API_KEY;
 const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
+  apiKey: serverGeminiApiKey,
   httpOptions: {
     headers: {
       'User-Agent': 'aistudio-build',
@@ -65,21 +114,61 @@ function normalizeAudioMimeType(mimeType?: string, fileName?: string): string {
   }
 }
 
-// Endpoint de transcrição individual de áudio via Gemini 3.8 Flash e fallback
+// Endpoint de verificação e controle de cota server-side
+app.get('/api/billing/quota', (req, res) => {
+  const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1';
+  const used = ipQuotaMap.get(clientIp) || 0;
+  res.json({
+    totalFree: MAX_FREE_IP_AUDIOS,
+    used,
+    remaining: Math.max(0, MAX_FREE_IP_AUDIOS - used),
+  });
+});
+
+// Endpoint para validar código promocional ou chave de acesso de homologação
+app.post('/api/billing/validate-passcode', (req, res) => {
+  const { code } = req.body || {};
+  if (!code || typeof code !== 'string') {
+    return res.status(400).json({ valid: false, error: 'Código de liberação inválido.' });
+  }
+
+  const normalized = code.trim().toUpperCase();
+  if (VALID_PASSCODES.has(normalized)) {
+    return res.json({
+      valid: true,
+      plan: 'unlimited_pro',
+      message: 'Acesso VIP ativado com sucesso!',
+    });
+  }
+
+  return res.status(403).json({
+    valid: false,
+    error: 'Código não encontrado ou expirado.',
+  });
+});
+
+// Endpoint de transcrição individual de áudio via Gemini com proteção de rate limit e fidelidade estrita
 app.post('/api/transcribe', async (req, res) => {
   try {
-    const { audioBase64, mimeType, fileName, userNotes, hasMultipleSpeakers } = req.body;
-
-    if (!audioBase64) {
-      return res.status(400).json({ error: 'Nenhum dado de áudio fornecido' });
+    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1';
+    
+    // 1. Verificação de Rate Limit
+    const rateCheck = checkRateLimit(clientIp);
+    if (!rateCheck.allowed) {
+      return res.status(429).json({
+        error: 'Limite de requisições por minuto atingido. Aguarde alguns instantes para nova transcrição.',
+      });
     }
 
-    const clientCustomKey = (req.headers['x-gemini-api-key'] as string) || req.body.customApiKey;
-    const activeApiKey = clientCustomKey || process.env.GEMINI_API_KEY;
+    const { audioBase64, mimeType, fileName, userNotes, hasMultipleSpeakers } = req.body;
 
-    if (!activeApiKey) {
+    if (!audioBase64 || typeof audioBase64 !== 'string') {
+      return res.status(400).json({ error: 'Nenhum dado de áudio válido fornecido.' });
+    }
+
+    if (!serverGeminiApiKey) {
       return res.status(500).json({ 
-        error: 'Chave da API Gemini não configurada no servidor. Verifique a variável GEMINI_API_KEY.' 
+        error: 'Serviço de transcrição temporariamente indisponível. Contate o administrador.' 
       });
     }
 
@@ -87,47 +176,37 @@ app.post('/api/transcribe', async (req, res) => {
     const resolvedMime = normalizeAudioMimeType(mimeType, fileName);
     const userNotesText = typeof userNotes === 'string' && userNotes.trim() ? userNotes.trim() : '';
 
-    let promptText = `Você é o sistema de tecnologia acústica de ponta e transcrição profunda em língua portuguesa.
-Sua missão: decodificar com sensibilidade acústica extrema e fidelidade absoluta tudo o que foi falado no áudio em tempo real.
+    // Prompt com diretrizes de fidelidade acústica: sensibilidade sem alucinação
+    let promptText = `Você é um perito em transcrição acústica de alta sensibilidade e fidelidade estrita em língua portuguesa.
+Sua prioridade máxima é a FIDELIDADE REAL da fala, preservando o significado exato sem inventar ou adivinhar o que não foi dito.
 
-DIRETRIZES CRÍTICAS E OBRIGATÓRIAS:
-1. NÃO EXISTE ÁUDIO INAUDÍVEL: Use reconhecimento espectral e fonético profundo para reconstruir as palavras exatas mesmo com ruído severo, interferência de trânsito, vento, áudio abafado, distante, fala rápida, gírias, sotaques regionais ou sussurros. É TOTALMENTE PROIBIDO omitir palavras ou usar termos como "[inaudível]", "[áudio inaudível]" ou "[indecifrável]".
+DIRETRIZES FUNDAMENTAIS:
+1. FIDELIDADE REAL E PRESERVAÇÃO DE DÚVIDAS:
+   - Transcreva com máxima precisão o que é audível, aproveitando seu poder de processamento para compreender fala com ruído, sotaques regionais, gírias e fala rápida.
+   - NUNCA invente palavras, diálogos ou orações inteiras que não foram ditas.
+   - Se um trecho sonoro for genuinamente indecifrável ou encoberto por ruído pesado, marque exatamente [trecho inaudível] ou [trecho incerto: <palavra provável>]. Preservar trechos incertos é vital para posterior revisão humana.
 2. RECONHECIMENTO DE QUEM ESTÁ FALANDO (DIARIZAÇÃO DE 2 OU MAIS PESSOAS):
-   Este áudio pode ser uma gravação de 2 ou mais pessoas (diálogo, conversa de WhatsApp gravada, reunião, entrevista, sobreposição de vozes ou intervenções rápidas).
-   - Analise com precisão as variações de timbre, tom de voz, entonação e pausas de fala para identificar a troca de interlocutores.
-   - Quando houver 2 ou mais vozes falando, separe e identifique cada interlocutor no início de sua respectiva fala:
+   - Analise com cuidado timbres, entonação e pausas de fala para identificar a troca de interlocutores.
+   - Quando houver 2 ou mais pessoas dialogando, separe cada fala com seu respectivo rótulo:
      [Interlocutor 1]: Fala...
      [Interlocutor 2]: Resposta...
-     [Interlocutor 1]: Réplica...
-   - Se as observações do usuário mencionarem nomes específicos de pessoas (exemplo: "conversa entre João e Maria", "Dra. Ana e paciente Pedro"), atribua e utilize esses nomes reais nos rótulos: "[João]: ...", "[Maria]: ...".
-   - Cada intervenção de orador deve estar em uma nova linha com seu rótulo correspondente.
-   - Se for estritamente apenas 1 pessoa falando o tempo todo, transcreva de forma corrida e fluida sem inventar interlocutores fictícios.`;
+   - Se as observações do usuário fornecerem nomes dos participantes, utilize esses nomes reais: [Nome 1]: ..., [Nome 2]: ...
+   - Se for apenas 1 orador falando, transcreva o texto de forma fluida sem criar interlocutores fictícios.`;
 
     if (userNotesText) {
       promptText += `\n\n3. OBSERVAÇÃO DO ÁUDIO FORNECIDA PELO USUÁRIO:
 "${userNotesText}"
-Atenção prioritária: use estas informações de contexto fornecidas pelo usuário para identificar as pessoas que estão falando, seus respectivos nomes e o vocabulário correto.`;
+Utilize estas informações de contexto fornecidas para identificar corretamente os participantes e termos específicos.`;
     }
 
-    promptText += `\n\n4. Retorne EXCLUSIVAMENTE o texto transcrito da fala com os rótulos de interlocutores, sem cumprimentos, explicações ou notas de rodapé fora do texto.`;
+    promptText += `\n\n4. Retorne EXCLUSIVAMENTE o texto transcrito com a rotulagem de interlocutores, sem introduções ou notas de encerramento fora da transcrição.`;
 
-    // Ordem de modelos prioritária: gemini-3.5-transcribe com fallback para gemini-3.1-flash-lite
+    // Ordem de modelos prioritária
     const candidateModels = [
       'gemini-3.5-transcribe',
       'gemini-3.1-flash-lite',
       'gemini-3.8-flash',
     ];
-
-    const currentAi = clientCustomKey
-      ? new GoogleGenAI({
-          apiKey: clientCustomKey,
-          httpOptions: {
-            headers: {
-              'User-Agent': 'aistudio-build',
-            },
-          },
-        })
-      : ai;
 
     let lastError: any = null;
     let transcriptionText = '';
@@ -135,8 +214,8 @@ Atenção prioritária: use estas informações de contexto fornecidas pelo usu�
 
     for (const modelName of candidateModels) {
       try {
-        console.log(`[API Transcribe] Tentando modelo: ${modelName} para ${fileName || 'áudio'}...`);
-        const response = await currentAi.models.generateContent({
+        console.log(`[API Transcribe] Processando áudio (${fileName || 'áudio'}) com ${modelName}...`);
+        const response = await ai.models.generateContent({
           model: modelName,
           contents: [
             {
@@ -155,17 +234,11 @@ Atenção prioritária: use estas informações de contexto fornecidas pelo usu�
             },
           ],
           config: {
-            temperature: 0.0,
+            temperature: 0.1,
           },
         });
 
-        let raw = (response.text || '').trim();
-        // Remove qualquer menção residual a inaudível
-        raw = raw
-          .replace(/\[\s*(?:áudio\s+)?(?:inaudível|inaudivel|indecifrável|indecifravel|incompreensível|incompreensivel)\s*\]/gi, '')
-          .replace(/\(\s*(?:áudio\s+)?(?:inaudível|inaudivel|indecifrável|indecifravel|incompreensível|incompreensivel)\s*\)/gi, '')
-          .trim();
-
+        const raw = (response.text || '').trim();
         if (raw) {
           transcriptionText = raw;
           usedModel = modelName;
@@ -176,7 +249,6 @@ Atenção prioritária: use estas informações de contexto fornecidas pelo usu�
       } catch (err: any) {
         lastError = err;
         console.warn(`[API Transcribe] Tentativa no modelo ${modelName} falhou:`, err?.message || err);
-        // Prossegue para o próximo modelo da cadeia de fallback
         continue;
       }
     }
@@ -192,18 +264,21 @@ Atenção prioritária: use estas informações de contexto fornecidas pelo usu�
           detectedSpeakers.push(name);
         }
       }
+      // Atualiza contador de cota gratuita por IP no servidor
+      const currentIpUsage = ipQuotaMap.get(clientIp) || 0;
+      ipQuotaMap.set(clientIp, currentIpUsage + 1);
     }
 
     if (lastError && !transcriptionText) {
-      const errorStr = lastError.message || String(lastError);
-      const isQuota = errorStr.includes('429') || errorStr.includes('RESOURCE_EXHAUSTED') || errorStr.includes('Quota exceeded');
+      const errorStr = (lastError.message || String(lastError)).toLowerCase();
+      const isQuota = errorStr.includes('429') || errorStr.includes('resource_exhausted') || errorStr.includes('quota');
       
+      // Resposta sanitizada sem vazamento de detalhes técnicos internos
       return res.status(isQuota ? 429 : 500).json({
         error: isQuota
-          ? 'Cota temporária atingida em todos os modelos da esteira (Gemini 3.5 Transcribe / 3.1 Flash-Lite). Tente novamente em instantes.'
-          : (lastError.message || 'Falha ao processar áudio na esteira de transcrição'),
+          ? 'Cota temporária atingida nos servidores de IA. Aguarde alguns instantes e tente novamente.'
+          : 'Não foi possível processar este áudio no momento. Tente novamente em instantes.',
         isQuotaError: isQuota,
-        details: errorStr,
       });
     }
 
@@ -218,7 +293,7 @@ Atenção prioritária: use estas informações de contexto fornecidas pelo usu�
   } catch (error: any) {
     console.error('Erro geral na rota de transcrição:', error);
     return res.status(500).json({
-      error: error.message || 'Falha ao transcrever o áudio com a API Gemini',
+      error: 'Falha interna ao processar áudio. Tente novamente.',
     });
   }
 });
@@ -226,18 +301,23 @@ Atenção prioritária: use estas informações de contexto fornecidas pelo usu�
 // Endpoint para leitura de fotos (OCR, documentos, cena) e análise/transcrição de vídeos do WhatsApp
 app.post('/api/analyze-media', async (req, res) => {
   try {
-    const { mediaBase64, mimeType, fileName, mediaType } = req.body;
-
-    if (!mediaBase64) {
-      return res.status(400).json({ error: 'Nenhum dado de mídia fornecido' });
+    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1';
+    const rateCheck = checkRateLimit(clientIp);
+    if (!rateCheck.allowed) {
+      return res.status(429).json({
+        error: 'Limite de requisições por minuto atingido. Aguarde alguns instantes.',
+      });
     }
 
-    const clientCustomKey = (req.headers['x-gemini-api-key'] as string) || req.body.customApiKey;
-    const activeApiKey = clientCustomKey || process.env.GEMINI_API_KEY;
+    const { mediaBase64, mimeType, fileName, mediaType } = req.body;
 
-    if (!activeApiKey) {
+    if (!mediaBase64 || typeof mediaBase64 !== 'string') {
+      return res.status(400).json({ error: 'Nenhum dado de mídia válido fornecido.' });
+    }
+
+    if (!serverGeminiApiKey) {
       return res.status(500).json({
-        error: 'Chave da API Gemini não configurada no servidor. Verifique a variável GEMINI_API_KEY.'
+        error: 'Serviço de análise visual temporariamente indisponível.',
       });
     }
 
@@ -246,12 +326,12 @@ app.post('/api/analyze-media', async (req, res) => {
 
     const promptText = isVideo
       ? `Você é um perito em análise visual e transcrição multimodal de vídeos em língua portuguesa.
-Sua missão: analisar a fundo este vídeo enviado no WhatsApp, descrever as ações e cenas e transcrever integralmente as falas presentes.
+Sua missão: analisar este vídeo enviado no WhatsApp, descrever as ações/cenas e transcrever as falas presentes com fidelidade.
 
 DIRETRIZES:
-1. TRANSCRIÇÃO DE FALAS: Transcreva fielmente todos os diálogos ou falas contidas no vídeo em português, sem omitir nada e sem marcações de 'inaudível'.
-2. LEITURA DE TEXTOS E ELEMENTOS VISUAIS: Se houver documentos, telas, placas ou textos visíveis no vídeo, leia e transcreva com exatidão.
-3. DESCRIÇÃO DA CENA: Explique o que acontece no vídeo de forma clara, objetiva e contextualizada.
+1. TRANSCRIÇÃO DE FALAS: Transcreva fielmente todos os diálogos ou falas contidas no vídeo em português. Se houver trechos inaudíveis, marque [trecho inaudível] em vez de inventar falas.
+2. LEITURA DE TEXTOS E ELEMENTOS VISUAIS: Se houver documentos, telas, placas ou textos visíveis no vídeo, transcreva com exatidão.
+3. DESCRIÇÃO DA CENA: Explique o que acontece no vídeo de forma clara e contextualizada.
 
 FORMATO:
 - Transcrição do Áudio / Diálogos: [Faladas no vídeo]
@@ -261,8 +341,8 @@ FORMATO:
 Sua missão: ler e analisar minuciosamente esta foto/imagem enviada no WhatsApp.
 
 DIRETRIZES:
-1. LEITURA DE TEXTOS (OCR COMPLETO): Transcreva com 100% de exatidão qualquer texto visível na foto (comprovantes de pagamento, documentos, prints de conversa, recibos, bilhetes, placas ou anotações).
-2. ANÁLISE VISUAL E CONTEXTO: Descreva com riqueza de detalhes o que a foto retrata (pessoas, local, objetos, itens fotografados e situação).
+1. LEITURA DE TEXTOS (OCR COMPLETO): Transcreva com exatidão qualquer texto visível na foto (comprovantes, documentos, prints, recibos, anotações).
+2. ANÁLISE VISUAL E CONTEXTO: Descreva o que a foto retrata com clareza.
 3. RESUMO CONTEXTUAL: Resuma o que essa imagem representa dentro da conversa.
 
 FORMATO:
@@ -271,23 +351,14 @@ FORMATO:
 
     const candidateModels = ['gemini-3.8-flash', 'gemini-3.1-flash-lite'];
 
-    const currentAi = clientCustomKey
-      ? new GoogleGenAI({
-          apiKey: clientCustomKey,
-          httpOptions: {
-            headers: { 'User-Agent': 'aistudio-build' },
-          },
-        })
-      : ai;
-
     let lastError: any = null;
     let analysisResult = '';
     let usedModel = '';
 
     for (const modelName of candidateModels) {
       try {
-        console.log(`[API Analyze Media] Tentando modelo: ${modelName} para ${fileName || 'mídia'}...`);
-        const response = await currentAi.models.generateContent({
+        console.log(`[API Analyze Media] Processando mídia (${fileName || 'mídia'}) com ${modelName}...`);
+        const response = await ai.models.generateContent({
           model: modelName,
           contents: [
             {
@@ -321,7 +392,7 @@ FORMATO:
 
     if (lastError && !analysisResult) {
       return res.status(500).json({
-        error: lastError.message || 'Falha ao analisar a mídia com a IA',
+        error: 'Não foi possível analisar este arquivo de mídia. Tente novamente.',
       });
     }
 
@@ -334,7 +405,7 @@ FORMATO:
   } catch (error: any) {
     console.error('Erro na rota de análise de mídia:', error);
     return res.status(500).json({
-      error: error.message || 'Falha ao processar arquivo visual com a IA',
+      error: 'Falha interna ao processar mídia. Tente novamente.',
     });
   }
 });
