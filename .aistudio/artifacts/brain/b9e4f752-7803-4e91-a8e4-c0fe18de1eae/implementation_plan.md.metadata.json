@@ -1,0 +1,6 @@
+{
+  "summary": "Plano de implementação para configurar a esteira de transcrição prioritária com o modelo especializado gemini-3.5-transcribe e fallback dinâmico para gemini-3.1-flash-lite, além de interface com alerta amigável e botão de retry individual com 1 clique.",
+  "updatedAt": "2026-10-14T19:14:52.484668150Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

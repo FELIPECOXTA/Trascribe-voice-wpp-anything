@@ -1,0 +1,6 @@
+{
+  "name": "Transcritor WhatsApp BABADO",
+  "description": "Acesse o arquivo ZIP BABADO no Google Drive ou faça upload, transcreva todos os áudios e gere o histórico completo em TXT integrado.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
