@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
+import { transcribeWithElevenLabs } from './providers/elevenlabs';
 
 dotenv.config();
 
@@ -166,14 +167,43 @@ app.post('/api/transcribe', async (req, res) => {
       return res.status(400).json({ error: 'Nenhum dado de áudio válido fornecido.' });
     }
 
-    if (!serverGeminiApiKey) {
-      return res.status(500).json({ 
-        error: 'Serviço de transcrição temporariamente indisponível. Contate o administrador.' 
-      });
+    if (!serverGeminiApiKey && !process.env.ELEVENLABS_API_KEY) {
+      return res.status(503).json({ error: 'Nenhum provedor de transcrição configurado.' });
     }
 
     const cleanBase64 = audioBase64.replace(/^data:audio\/[a-zA-Z0-9-+.]+;base64,/, '');
     const resolvedMime = normalizeAudioMimeType(mimeType, fileName);
+    // ElevenLabs Scribe v2: prefer it, falling back to Gemini on API/quota errors.
+    if (process.env.ELEVENLABS_API_KEY) {
+      try {
+        const result = await transcribeWithElevenLabs({
+          base64: cleanBase64,
+          mimeType: resolvedMime,
+          fileName: typeof fileName === 'string' ? fileName : 'audio.ogg',
+        });
+        const used = ipQuotaMap.get(clientIp) || 0;
+        ipQuotaMap.set(clientIp, used + 1);
+        return res.json({
+          success: true,
+          fileName: fileName || 'audio',
+          transcription: result.transcription,
+          modelUsed: result.modelUsed,
+          provider: 'elevenlabs',
+          speakersDetected: result.speakersDetected,
+          hasMultipleSpeakers: result.speakersDetected.length >= 2,
+        });
+      } catch (error: any) {
+        // Never log the media content or an API key.
+        console.warn('[API Transcribe] ElevenLabs failed; trying Gemini:', error?.status || error?.name || 'error');
+        if (!serverGeminiApiKey) {
+          return res.status(503).json({ error: 'ElevenLabs indisponível e Gemini não configurado.' });
+        }
+      }
+    }
+    if (!serverGeminiApiKey) {
+      return res.status(503).json({ error: 'Nenhum provedor de transcrição disponível.' });
+    }
+
     const userNotesText = typeof userNotes === 'string' && userNotes.trim() ? userNotes.trim() : '';
 
     // Prompt com diretrizes de fidelidade acústica: sensibilidade sem alucinação
@@ -287,6 +317,7 @@ Utilize estas informações de contexto fornecidas para identificar corretamente
       fileName: fileName || 'audio',
       transcription: transcriptionText || 'Áudio processado.',
       modelUsed: usedModel,
+      provider: 'gemini',
       speakersDetected: detectedSpeakers,
       hasMultipleSpeakers: detectedSpeakers.length >= 2,
     });
@@ -415,6 +446,7 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
+    hasElevenLabsKey: Boolean(process.env.ELEVENLABS_API_KEY),
   });
 });
 
@@ -429,9 +461,9 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
+    app.use(express.static(path.resolve(__dirname, '../../dist')));
     app.get('*', (req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+      res.sendFile(path.resolve(__dirname, '../../dist', 'index.html'));
     });
   }
 

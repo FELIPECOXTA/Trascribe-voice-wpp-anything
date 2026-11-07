@@ -23,7 +23,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenPricing,
 }) => {
   return (
-    <header className="border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-md sticky top-0 z-40">
+    <header className="stitch-topbar border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-md sticky top-0 z-40">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
         {/* Brand */}
         <div className="flex items-center gap-3">
