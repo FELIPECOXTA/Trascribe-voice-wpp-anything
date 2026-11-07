@@ -603,7 +603,7 @@ export default function App() {
           ),
         };
       });
-      setErrorMessage(`Não foi possível transcrever "${audio.name}". O sistema tentou os modelos gemini-3.5-transcribe e gemini-3.1-flash-lite.`);
+      setErrorMessage(`Não foi possível transcrever "${audio.name}". Verifique a disponibilidade de ElevenLabs e Gemini.`);
     }
   };
 
@@ -789,17 +789,17 @@ export default function App() {
         {!parsedChat ? (
           <div className="space-y-8 py-4">
             {/* Hero Banner */}
-            <div className="text-center max-w-2xl mx-auto space-y-3">
+            <div className="stitch-hero text-center max-w-2xl mx-auto space-y-3">
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-xs font-mono text-emerald-400">
                 <Sparkles className="w-3.5 h-3.5" />
                 <span>IA Multimodal · Cota de Testes Gratuita</span>
               </div>
-              <h1 className="text-2xl sm:text-4xl font-extrabold text-zinc-100 tracking-tight">
+              <h1 className="stitch-hero__title text-2xl sm:text-4xl font-extrabold text-zinc-100 tracking-tight">
                 Transcreva Áudios e Conversas de Qualquer Plataforma
               </h1>
-              <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed">
+              <p className="stitch-hero__description text-xs sm:text-sm text-zinc-400 leading-relaxed">
                 Conecte-se ao Google Drive, importe arquivos do WhatsApp ou Telegram,
-                grave áudios ao vivo pelo microfone ou arraste qualquer gravação para transcrever com precisão instantânea.
+                grave áudios pelo microfone ou envie arquivos para reunir falas e mensagens em uma linha do tempo.
               </p>
 
               {/* Botão de Divulgação / Impulsionamento para Amigos e Google */}
@@ -959,7 +959,7 @@ export default function App() {
                 >
                   <Sparkles className="w-3.5 h-3.5" />
                   <span>
-                    {isTranscribing ? 'Transcrevendo áudios...' : 'Transcrever todos com Gemini'}
+                    {isTranscribing ? 'Transcrevendo áudios...' : 'Transcrever todos (ElevenLabs → Gemini)'}
                   </span>
                 </button>
               )}

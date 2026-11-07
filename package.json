@@ -1,15 +1,16 @@
 {
-  "name": "react-example",
+  "name": "transcreva-tudo-ai",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx server.ts",
+    "dev": "tsx apps/api/server.ts",
     "build": "vite build",
-    "start": "tsx server.ts",
+    "start": "tsx apps/api/server.ts",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
