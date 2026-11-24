@@ -1,0 +1,13 @@
+/* Visual language adapted from Google Stitch. No external CSS/JS CDN. */
+:root { color-scheme: dark; --stitch-bg: #080a0f; --stitch-card: #11141f; --stitch-green: #10b981; --stitch-cyan: #06b6d4; }
+body { background: var(--stitch-bg); }
+#root { min-height: 100dvh; background-image: radial-gradient(circle at 12% 14%, rgba(16,185,129,.055), transparent 40%), radial-gradient(circle at 94% 37%, rgba(6,182,212,.045), transparent 40%); }
+.stitch-topbar { background-color: rgba(8,10,15,.9); border-color: rgba(255,255,255,.065); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); }
+.stitch-hero { padding-block: clamp(1.2rem,5vw,3rem); }
+.stitch-hero__title { max-width: 33ch; margin-inline: auto; line-height: 1.15; text-wrap: balance; }
+.stitch-hero__description { max-width: 65ch; margin-inline: auto; line-height: 1.7; }
+.stitch-upload-action { background: linear-gradient(115deg,#059669,#0d9488); border: 1px solid rgba(52,211,153,.32); box-shadow: 0 12px 34px rgba(0,0,0,.28), 0 0 24px rgba(16,185,129,.10); }
+.stitch-record-action { background: rgba(17,20,31,.85); border-color: rgba(251,113,133,.24); }
+.stitch-upload-action:focus-visible,.stitch-record-action:focus-visible { outline: 3px solid var(--stitch-cyan); outline-offset: 4px; }
+@media (max-width:640px) { .stitch-hero { padding-block: 1.65rem; } .stitch-hero__title { font-size: clamp(1.75rem, 7vw, 2.25rem); } .stitch-hero__description { font-size: .9rem; } .stitch-upload-action,.stitch-record-action { min-height:96px; } .stitch-topbar button { min-height:42px; } }
+@media (prefers-reduced-motion:reduce) { .stitch-upload-action,.stitch-record-action { transition-duration:0ms!important; } }

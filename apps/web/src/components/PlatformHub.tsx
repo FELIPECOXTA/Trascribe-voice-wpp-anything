@@ -78,7 +78,7 @@ export const PlatformHub: React.FC<PlatformHubProps> = ({
         <button
           onClick={() => !isProcessing && fileInputRef.current?.click()}
           disabled={isProcessing}
-          className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-left shadow-lg shadow-emerald-950/40 flex items-center justify-between gap-4 transition-all active:scale-[0.98] group"
+          className="stitch-upload-action p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-left shadow-lg shadow-emerald-950/40 flex items-center justify-between gap-4 transition-all active:scale-[0.98] group"
         >
           <div className="flex items-center gap-3.5">
             <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
@@ -101,7 +101,7 @@ export const PlatformHub: React.FC<PlatformHubProps> = ({
         <button
           onClick={onOpenRecorderModal}
           disabled={isProcessing}
-          className="p-4 sm:p-5 rounded-2xl bg-zinc-900 border border-zinc-700/80 hover:border-emerald-500/50 hover:bg-zinc-800 text-left shadow-lg flex items-center justify-between gap-4 transition-all active:scale-[0.98] group"
+          className="stitch-record-action p-4 sm:p-5 rounded-2xl bg-zinc-900 border border-zinc-700/80 hover:border-emerald-500/50 hover:bg-zinc-800 text-left shadow-lg flex items-center justify-between gap-4 transition-all active:scale-[0.98] group"
         >
           <div className="flex items-center gap-3.5">
             <div className="w-12 h-12 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center shrink-0">

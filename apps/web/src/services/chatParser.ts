@@ -22,6 +22,7 @@ export interface ChatMessage {
   audioFile?: ExtractedAudioFile;
   isSystem: boolean;
   matchedByTimestamp?: boolean;
+  matchConfidence?: 'confirmed' | 'probable' | 'unknown';
 }
 
 export interface ParsedChat {
@@ -423,6 +424,7 @@ export function parseWhatsAppChat(
         audioFileName: matchedMedia ? matchedMedia.name : mediaCandidate.candidate && !mediaCandidate.candidate.startsWith('__GENERIC_') ? mediaCandidate.candidate : undefined,
         mediaFileName: matchedMedia ? matchedMedia.name : undefined,
         audioFile: matchedMedia,
+        matchConfidence: matchedMedia ? 'confirmed' : undefined,
         isSystem,
       };
     } else if (currentMsg) {
@@ -449,6 +451,7 @@ export function parseWhatsAppChat(
             currentMsg.audioFileName = matched.name;
             currentMsg.mediaFileName = matched.name;
             currentMsg.audioFile = matched;
+            currentMsg.matchConfidence = 'confirmed';
             matched.matchedSender = currentMsg.sender;
             matched.matchedReason = 'Nome exato em linha de anexo';
             matchedAudiosSet.add(matched.name);
@@ -495,6 +498,7 @@ export function parseWhatsAppChat(
           (msg.isVideo && candType === 'video') ||
           (msg.isAudio && candType === 'audio');
 
+        if (!typeMatches) continue; // Match only media of the same type.
         const candDate = candidate.inferredTimestamp || candidate.fileDate || (candidate.lastModified ? new Date(candidate.lastModified) : null);
         if (candDate) {
           const diffMs = Math.abs(candDate.getTime() - msgTime);
@@ -511,6 +515,7 @@ export function parseWhatsAppChat(
         msg.mediaFileName = bestCandidate.name;
         msg.audioFile = bestCandidate;
         msg.matchedByTimestamp = true;
+        msg.matchConfidence = 'probable';
         const candType = bestCandidate.mediaType || getMediaType(bestCandidate.name);
         if (candType === 'image') {
           msg.isImage = true;
@@ -523,8 +528,8 @@ export function parseWhatsAppChat(
           msg.mediaType = 'audio';
         }
         bestCandidate.matchedSender = msg.sender;
-        bestCandidate.inferredTimestampStr = msg.timestamp;
-        bestCandidate.matchedReason = `Vinculado por horário (${msg.timestamp}) ao remetente ${msg.sender}`;
+        // Keep the original file timestamp; the chat timestamp is separate.
+        bestCandidate.matchedReason = `Associação provável por proximidade de horário (${msg.timestamp}); revisar vínculo e remetente`;
         matchedAudiosSet.add(bestCandidate.name);
         matchedByTimestampCount++;
 
@@ -534,30 +539,8 @@ export function parseWhatsAppChat(
     }
   }
 
-  // ETAPA 3: Mídias restantes com marcadores genéricos associadas por ordem
-  for (const msg of messages) {
-    if ((msg.isAudio || msg.isImage || msg.isVideo) && !msg.audioFile && availableAudios.length > 0) {
-      const candidate = availableAudios.shift()!;
-      msg.audioFileName = candidate.name;
-      msg.mediaFileName = candidate.name;
-      msg.audioFile = candidate;
-      const candType = candidate.mediaType || getMediaType(candidate.name);
-      if (candType === 'image') {
-        msg.isImage = true;
-        msg.mediaType = 'image';
-      } else if (candType === 'video') {
-        msg.isVideo = true;
-        msg.mediaType = 'video';
-      } else {
-        msg.isAudio = true;
-        msg.mediaType = 'audio';
-      }
-      candidate.matchedSender = msg.sender;
-      candidate.inferredTimestampStr = msg.timestamp;
-      candidate.matchedReason = `Vinculado na ordem da conversa (${msg.timestamp}) com ${msg.sender}`;
-      matchedAudiosSet.add(candidate.name);
-    }
-  }
+  // ETAPA 3: Não atribuir vínculo baseado apenas na ordem do ZIP.
+  // Mídias sem identificação segura permanecem sem remetente confirmado.
 
   // ETAPA 4: Mídias (áudios, fotos, vídeos) presentes no ZIP/upload sem mensagem de texto correspondente
   // MANTÉM A MESMA HORA: insere na linha do tempo exatamente no horário em que foram criadas/modificadas!
@@ -568,29 +551,8 @@ export function parseWhatsAppChat(
     const timeStr = audioDate ? formatToWhatsAppTimestamp(audioDate) : inferTimestampFromFileName(remaining.name, remaining);
     const mType = remaining.mediaType || getMediaType(remaining.name);
 
-    // Tenta identificar quem estava falando no chat naquele mesmo horário
-    let inferredSender = mType === 'image' ? 'Foto / Imagem' : mType === 'video' ? 'Vídeo Anexo' : 'Nota de Voz / Áudio';
-    if (audioDate) {
-      const audioMs = audioDate.getTime();
-      let closestMsg: ChatMessage | null = null;
-      let minDelta = Infinity;
-
-      for (const m of messages) {
-        if (!m.isSystem && m.timestampDate && m.sender) {
-          const delta = Math.abs(m.timestampDate.getTime() - audioMs);
-          if (delta < minDelta && delta <= 300000) { // Até 5 minutos
-            minDelta = delta;
-            closestMsg = m;
-          }
-        }
-      }
-
-      if (closestMsg) {
-        inferredSender = closestMsg.sender;
-        remaining.matchedSender = closestMsg.sender;
-        remaining.matchedReason = `Identificado pelo horário de envio aproximado às ${closestMsg.timestamp}`;
-      }
-    }
+    // Modification time may not be the original send time or prove the sender.
+    const inferredSender = 'Remetente não identificado';
 
     const typeDesc = mType === 'image' ? 'Foto / Imagem' : mType === 'video' ? 'Vídeo' : 'Mensagem de áudio';
 
@@ -609,7 +571,8 @@ export function parseWhatsAppChat(
       mediaFileName: remaining.name,
       audioFile: remaining,
       isSystem: false,
-      matchedByTimestamp: true,
+      matchedByTimestamp: false,
+      matchConfidence: 'unknown',
     });
   }
 
